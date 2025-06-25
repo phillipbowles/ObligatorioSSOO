@@ -1,46 +1,59 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
 #include "vfs.h"
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     if (argc != 2) {
-        printf("Uso: %s imagen\n", argv[0]);
+        fprintf(stderr, "Uso: %s imagen\n", argv[0]);
         return EXIT_FAILURE;
     }
 
     const char *image_path = argv[1];
+    
+    struct superblock sb_struct, *sb = &sb_struct;
+    if (read_superblock(image_path, sb) != 0) {
+        fprintf(stderr, "Error al leer superblock\n");
+        return EXIT_FAILURE;
+    }
+
     struct inode root_inode;
-
-    // Leer el inode del directorio raíz
     if (read_inode(image_path, ROOTDIR_INODE, &root_inode) != 0) {
-        fprintf(stderr, "Error al leer el inode del directorio raíz.\n");
+        fprintf(stderr, "Error al leer el inodo del directorio raíz\n");
         return EXIT_FAILURE;
     }
 
-    uint8_t buffer[BLOCK_SIZE];
-    int bytes_read = inode_read_data(image_path, ROOTDIR_INODE, buffer, sizeof(buffer), 0);
-    if (bytes_read <= 0) {
-        fprintf(stderr, "Error al leer datos del directorio raíz.\n");
-        return EXIT_FAILURE;
-    }
+    printf("INOD TYPE PERMS      USER       GROUP      BLKS     SIZE CREATED             MODIFIED            ACCESSED            NAME\n");
+    printf("---- ---- ---------- ---------- ---------- ---- -------- ------------------- ------------------- ------------------- ----\n");
 
-    // Definir estructura de entrada de directorio acorde a la especificación del proyecto
-    struct dir_entry {
-        uint16_t inode;           // generalmente 2 bytes
-        char name[FILENAME_MAX_LEN];  // nombre con longitud fija
-    };
-    struct dir_entry *entries = (struct dir_entry *)buffer;
+    for (uint16_t i = 0; i < root_inode.blocks; i++) {
+        int block_num = get_block_number_at(image_path, &root_inode, i);
+        if (block_num <= 0) {
+            fprintf(stderr, "Error al obtener bloque %d del directorio raíz\n", i);
+            return EXIT_FAILURE;
+        }
 
-    uint32_t total_entries = root_inode.size / sizeof(struct dir_entry);
-    for (uint32_t i = 0; i < total_entries; i++) {
-        if (entries[i].inode != 0) {
-            struct inode in;
-            if (read_inode(image_path, entries[i].inode, &in) == 0) {
-                print_inode(&in, entries[i].inode, entries[i].name);
-            } else {
-                fprintf(stderr, "Error al leer inode del archivo %s.\n", entries[i].name);
+        uint8_t data_buf[BLOCK_SIZE];
+        if (read_block(image_path, block_num, data_buf) != 0) {
+            fprintf(stderr, "Error al leer bloque %d\n", block_num);
+            return EXIT_FAILURE;
+        }
+
+        struct dir_entry *entries = (struct dir_entry *)data_buf;
+
+        for (uint32_t j = 0; j < DIR_ENTRIES_PER_BLOCK; j++) {
+            if (entries[j].inode == 0) {
+                continue;
             }
+
+            struct inode file_inode;
+            if (read_inode(image_path, entries[j].inode, &file_inode) != 0) {
+                fprintf(stderr, "Error al leer inodo %u\n", entries[j].inode);
+                continue;
+            }
+
+            print_inode(&file_inode, entries[j].inode, entries[j].name);
         }
     }
 

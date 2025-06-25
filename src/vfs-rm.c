@@ -1,52 +1,66 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
 #include "vfs.h"
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Uso: %s imagen archivo1 [archivo2...]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
     const char *image_path = argv[1];
+    
+    struct superblock sb_struct, *sb = &sb_struct;
+    if (read_superblock(image_path, sb) != 0) {
+        fprintf(stderr, "Error al leer superblock\n");
+        return EXIT_FAILURE;
+    }
 
     for (int i = 2; i < argc; i++) {
         const char *filename = argv[i];
+        
+        if (strcmp(filename, ".") == 0 || strcmp(filename, "..") == 0) {
+            fprintf(stderr, "Error: no se puede eliminar '%s'\n", filename);
+            return EXIT_FAILURE;
+        }
+        
         int inode_number = dir_lookup(image_path, filename);
         if (inode_number <= 0) {
-            fprintf(stderr, "Error: El archivo \"%s\" no existe.\n", filename);
-            continue;
+            fprintf(stderr, "Error: archivo '%s' no encontrado\n", filename);
+            return EXIT_FAILURE;
         }
-
-        struct inode in;
-        if (read_inode(image_path, inode_number, &in) != 0) {
-            fprintf(stderr, "Error al leer el inode de \"%s\".\n", filename);
-            continue;
+        
+        struct inode file_inode;
+        if (read_inode(image_path, inode_number, &file_inode) != 0) {
+            fprintf(stderr, "Error al leer inodo %d del archivo '%s'\n", inode_number, filename);
+            return EXIT_FAILURE;
         }
-
-        if ((in.mode & 0xF000) != 0x8000) {
-            fprintf(stderr, "Error: \"%s\" no es un archivo regular.\n", filename);
-            continue;
+        
+        if ((file_inode.mode & INODE_MODE_FILE) != INODE_MODE_FILE) {
+            fprintf(stderr, "Error: '%s' no es un archivo regular\n", filename);
+            return EXIT_FAILURE;
         }
-
-        if (inode_trunc_data(image_path, &in) != 0) {
-            fprintf(stderr, "Error al truncar \"%s\".\n", filename);
-            continue;
+        
+        if (inode_trunc_data(image_path, &file_inode) != 0) {
+            fprintf(stderr, "Error al liberar bloques del archivo '%s'\n", filename);
+            return EXIT_FAILURE;
         }
-
-        if (free_inode(image_path, inode_number) != 0) {
-            fprintf(stderr, "Error al liberar inode de \"%s\".\n", filename);
-            continue;
-        }
-
+        
         if (remove_dir_entry(image_path, filename) != 0) {
-            fprintf(stderr, "Error al eliminar la entrada de \"%s\".\n", filename);
-            continue;
+            fprintf(stderr, "Error al eliminar entrada de directorio para '%s'\n", filename);
+            return EXIT_FAILURE;
         }
-
-        printf("Archivo \"%s\" eliminado exitosamente.\n", filename);
+        
+        if (free_inode(image_path, inode_number) != 0) {
+            fprintf(stderr, "Error al liberar inodo %d del archivo '%s'\n", inode_number, filename);
+            return EXIT_FAILURE;
+        }
+        
+        DEBUG_PRINT("Archivo '%s' eliminado exitosamente\n", filename);
     }
-
+    
     return EXIT_SUCCESS;
 }
